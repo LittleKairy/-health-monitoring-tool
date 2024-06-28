@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.14",
+    "fft.js": "^4.0.4",
+    "ml-matrix": "^6.11.1",
     "vue": "^3.4.29"
   },
   "devDependencies": {

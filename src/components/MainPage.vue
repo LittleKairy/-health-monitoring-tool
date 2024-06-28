@@ -1,54 +1,50 @@
 <template>
-  <div class="greetings" id="demos">
-    <h2><br>Demo: Webcam continuous hand gesture detection</h2>
-    <p>Use your hand to make gestures in front of the camera to get gesture classification. </br>Click <b>enable webcam</b> below and grant access to the webcam if prompted.</p>
-
-    <div id="liveView" class="videoView">
-      <button class="mdc-button mdc-button--raised" @click="handleEnabelWebcamButtonClick">
-        {{ btnText }}
-      </button>
-      <!-- <button @click="stopWebcam">关闭摄像头</button> -->
-      <div style="position: relative;">
-        <video ref="video" autoplay playsinline @loadeddata="predictWebcam"></video>
-        <canvas class="output_canvas" ref="canvasElement" width="1280" height="720" style="position: absolute; left: 0px; top: 0px;"></canvas>
-        <p ref='gestureOutput' class="output"></p>
-      </div>
+  <div class="mainpage-container">
+    <button @click="handleBtnClick">
+      {{ btnText }}
+    </button>
+    <div style="position: relative;">
+      <video ref="video" autoplay playsinline @loadeddata="predictWebcam"></video>
+      <canvas ref="canvasElement" style="position: absolute; left: 0px; top: 0px; z-index: 1;"></canvas>
     </div>
-
-    <div class="fingers" style="margin-top: 500;">
-      <!-- <canvas v-for="(item, i) in showImgArr" :ref="`fingerCanvasElement_${i}`" width="1280" height="720" style="position: absolute; left: 0px; top: 0px;"></canvas> -->
-       <canvas ref="fingerCanvasElement_0" width="200" height="200"></canvas>
+    <div ref="resultsContainerElement" class="resultsContainerElement">
+      <!-- <canvas ref="resultCanvasELement" :width="videoWidth" :height="videoHeight"></canvas> -->
+    </div>
+    <div class="heartRate">
+      <p class="title">心率</p>
+      <p v-for="(item, i) in heartRateDisplay" :key="i">{{ item }}</p>
+    </div>
+    <div class="spo2">
+      <p class="title">血氧浓度</p>
+      <p v-for="(item, i) in spO2Display" :key="i">{{ item }}</p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref } from "vue";
 import {
   FilesetResolver,
   HandLandmarker,
   DrawingUtils,
+  type HandLandmarkerResult,
 } from "@mediapipe/tasks-vision";
+import FFT from "fft.js";
 
 let handLandmarker: HandLandmarker;
 const runningMode = "VIDEO";
-
-const btnText = ref("ENABLE WEBCAM");
-let webcamRunning: Boolean = false;
-const height = 360;
-const width = 480;
-const videoHeight = "360px";
-const videoWidth = "480px";
+let webcamRunning: Boolean = false; // 控制是否持续监测
+const btnText = ref("打开摄像头");
+const videoHeight = 360;
+const videoWidth = 480;
+const resultHeight = 80;
+const resultWidth = 80;
 const video = ref<HTMLVideoElement | null>(null);
 const canvasElement = ref<HTMLCanvasElement | null>(null);
+const resultsContainerElement = ref<HTMLCanvasElement | null>(null);
 let canvasCtx: CanvasRenderingContext2D;
-const fingerCanvasElement_0 = ref<HTMLCanvasElement | null>(null);
-let fingerCanvasCtx_0: CanvasRenderingContext2D;
-const gestureOutput = ref<HTMLElement | null>(null);
-let handleEnabelWebcamButtonClick: Function;
-let mediaStream = null;
-const fingerArr = [4, 8, 12, 16, 20];
-let showImgArr = ref<ImageData[]>([]);
+const fingerArr = [4, 8, 12, 16, 20]; // 指尖的位置
+const resultsCanvasCtx: CanvasRenderingContext2D[] = [];
 
 // Before we can use HandLandmarker class we must wait for it to finish
 // loading. Machine Learning models can be large and take a moment to
@@ -77,10 +73,10 @@ const enableCam = () => {
 
   if (webcamRunning === true) {
     webcamRunning = false;
-    btnText.value = "ENABLE PREDICTIONS";
+    btnText.value = "开启监测";
   } else {
     webcamRunning = true;
-    btnText.value = "DISABLE PREDICTIONS";
+    btnText.value = "暂停监测";
   }
 
   // getUsermedia parameters.
@@ -90,47 +86,53 @@ const enableCam = () => {
 
   // Activate the webcam stream.
   navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
-    video.value.srcObject = stream;
-    mediaStream = stream;
-    // video.addEventListener("loadeddata", predictWebcam);
+    if (video.value) video.value.srcObject = stream; // 将画面输出video中
   });
 };
-
-// 关掉视频
-// const stopWebcam = () => {
-//   // 删除视频流
-//   if (mediaStream) {
-//     video.value.srcObject = null;
-//     mediaStream.getTracks().forEach((track) => track.stop());
-//     mediaStream = null;
-//   }
-
-//   canvasCtx.restore();
-// };
 
 // Check if webcam access is supported.
 const hasGetUserMedia = computed(() => !!navigator.mediaDevices?.getUserMedia);
 
-onMounted(() => {
-  canvasCtx = canvasElement.value?.getContext('2d');
-  fingerCanvasCtx_0 = fingerCanvasElement_0.value?.getContext('2d');
-
-  // If webcam supported, add event listener to button for when user
-  // wants to activate it.
-  if (hasGetUserMedia) {
-    // enableWebcamButton.addEventListener("click", enableCam);
-    handleEnabelWebcamButtonClick = enableCam;
+const handleBtnClick = () => {
+  if (hasGetUserMedia.value) {
+    enableCam();
   } else {
     console.warn("getUserMedia() is not supported by your browser");
+  }
+}
+
+onMounted(() => {
+  // 获取到canvas的上下文
+  canvasCtx = canvasElement.value?.getContext('2d') as CanvasRenderingContext2D;
+  // resultCanvasCtx = resultCanvasELement.value?.getContext('2d') as CanvasRenderingContext2D;
+
+  // 设置video元素的宽高和canvas一致
+  if (canvasElement.value && video.value) {
+    canvasElement.value.height = videoHeight;
+    video.value.height = videoHeight;
+    canvasElement.value.width = videoWidth;
+    video.value.width = videoWidth;
+  }
+
+  // 创建存放指尖图像结果的canvas
+  for (let i = 0; i < 5; i++) {
+    const resultCanvasELement = document.createElement('canvas');
+    resultCanvasELement.height = resultHeight;
+    resultCanvasELement.width = resultWidth;
+    if (resultsContainerElement.value) {
+      resultsContainerElement.value.appendChild(resultCanvasELement);
+    }
+    const ctx = resultCanvasELement.getContext('2d') as CanvasRenderingContext2D;
+    resultsCanvasCtx.push(ctx);
   }
 });
 
 let lastVideoTime = -1;
-let results = undefined;
+let results: HandLandmarkerResult;
 const predictWebcam = async () => {
-  // Now let's start detecting the stream.
+  // 当前时间和最后一次时间不一致时，重新检测。实现连续的检测，每次检测更新结果
   let nowInMs = Date.now();
-  if (video.value.currentTime !== lastVideoTime) {
+  if (video.value && video.value.currentTime !== lastVideoTime) {
     lastVideoTime = video.value.currentTime;
     results = handLandmarker.detectForVideo(video.value, nowInMs);
   }
@@ -139,19 +141,12 @@ const predictWebcam = async () => {
   canvasCtx.clearRect(
     0,
     0,
-    canvasElement.value?.width,
-    canvasElement.value?.height
+    videoWidth,
+    videoHeight,
   );
   const drawingUtils = new DrawingUtils(canvasCtx);
 
-  canvasElement.value.style.height = videoHeight;
-  video.value.style.height = videoHeight;
-  canvasElement.value.style.width = videoWidth;
-  video.value.style.width = videoWidth;
-
-  const imgArr = new Array();
-
-  if (results.landmarks) {    
+  if (results.landmarks) {
     for (let landmarks of results.landmarks) {
       landmarks = landmarks.filter((item, i) => fingerArr.includes(i));
       drawingUtils.drawLandmarks(landmarks, {
@@ -159,134 +154,253 @@ const predictWebcam = async () => {
         lineWidth: 2,
       });
 
-      nextTick(() => {
-        // // 获取每个手指的图片数据
-        // for (const landmark of landmarks) {
-        //   console.log(landmark.x * width - 5, landmark.y * height - 5, 10, 10);
-        //   canvasCtx.fillStyle = 'red';
-        //   canvasCtx.fillRect(50, 50, 100, 100);
-        //       console.log(989898, res);
-          
-        //   imgArr.push(res);
-        // }
+      landmarks.forEach((item, i) => {
+        if (item.x <= 1 && item.y <= 1) {
+          resultsCanvasCtx[i].save();
+          // 这里位置有一定的偏差，暂未解决，暂时加上30px
+          resultsCanvasCtx[i].drawImage(video.value as CanvasImageSource, item.x * videoWidth + 30, item.y * videoHeight + 30, resultWidth, resultHeight, 0, 0, resultWidth, resultWidth);
+
+          // 提取RGB信号
+          const frame = resultsCanvasCtx[i].getImageData(0, 0, resultWidth, resultHeight);
+          extractColorSignals(frame, i);
+
+          resultsCanvasCtx[i].restore();
+        } else {
+          resultsCanvasCtx[i].clearRect(0, 0, resultWidth, resultHeight);
+        }
       })
     }
+  } else {
+    resultsCanvasCtx.forEach((item) => {
+      item.clearRect(0, 0, resultWidth, resultHeight);
+    })
   }
-  
-  showImgArr = imgArr;
-  
+
   canvasCtx.restore();
 
-  // Call this function again to keep predicting when the browser is ready.
+  // 持续监测
   if (webcamRunning === true) {
-    window.requestAnimationFrame(predictWebcam); 
-    console.log(999, fingerCanvasCtx_0);
-    
-    // if (fingerCanvasCtx_0) {
-    //   console.log(111231232, showImgArr[0]);
-    //   fingerCanvasCtx_0.putImageData(showImgArr[0], 0, 0);
-    // }
+    window.requestAnimationFrame(predictWebcam);
   }
 }
 
+
+// RBG信号
+const redSignal: Array<Array<number>> = new Array(5);
+const greenSignal: Array<Array<number>> = new Array(5);
+const blueSignal: Array<Array<number>> = new Array(5);
+for (let i = 0; i < 5; i++) {
+  redSignal[i] = new Array();
+  greenSignal[i] = new Array();
+  blueSignal[i] = new Array();
+}
+const lambda = 1600; // HP 滤波参数
+const fps = 30; // 帧率
+const heartRateDisplay = ref<number[]>(new Array(5));
+const spO2Display = ref<number[]>(new Array(5));
+
+/**
+ * 提取RGB数据, 并计算心率和血氧浓度
+ * @param frame 当前帧的数据
+ * @param index 第几个指尖数据
+ */
+function extractColorSignals(frame: ImageData, index: number) {
+  const length = frame.data.length / 4;
+  let red = 0, green = 0, blue = 0;
+
+  for (let i = 0; i < length; i++) {
+    red += frame.data[i * 4];
+    green += frame.data[i * 4 + 1];
+    blue += frame.data[i * 4 + 2];
+  }
+
+  redSignal[index].push(red / length);
+  greenSignal[index].push(green / length);
+  blueSignal[index].push(blue / length);
+
+  if (redSignal[index].length >= 256) { // 为fft保留2的幂次方的length
+    // 计算心率
+    // 对绿色分量进行 HP 滤波
+    // const greenResidual = hpFilter(greenSignal[index], lambda);
+    // 对滤波后的残差进行 FFT 变换
+    // const greenSpectrum = computeFFT(greenResidual);
+    const greenSpectrum = computeFFT(greenSignal[index]);
+    // 得出心率
+    const heartRate = calculateHeartRate(greenSpectrum);
+    heartRateDisplay.value[index] = heartRate;
+
+    // 计算血氧浓度
+    // 对红色和蓝色进行HP滤波
+    // const redResidual = hpFilter(redSignal[index], lambda);
+    // const blueResidual = hpFilter(blueSignal[index], lambda);
+    // const spO2 = calculateSpO2(redResidual, blueResidual);
+    const spO2 = calculateSpO2(redSignal[index], blueSignal[index]);
+    spO2Display.value[index] = spO2;
+
+    redSignal[index].shift();
+    greenSignal[index].shift();
+    blueSignal[index].shift();
+  }
+}
+
+// HP 滤波函数
+function hpFilter(data: number[], lambda: number) {
+  const n = data.length;
+  const I = Array.from({ length: n }, (_, i) =>
+    Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))
+  );
+  const D = Array.from({ length: n - 2 }, (_, i) =>
+    Array.from({ length: n }, (_, j) => {
+      if (j === i) return 1;
+      if (j === i + 1) return -2;
+      if (j === i + 2) return 1;
+      return 0;
+    })
+  );
+
+  // Helper function to transpose a matrix
+  function transpose(matrix) {
+    return matrix[0].map((_, colIndex) => matrix.map(row => row[colIndex]));
+  }
+
+  // Helper function to multiply two matrices
+  function multiply(A, B) {
+    const rowsA = A.length, colsA = A[0].length;
+    const rowsB = B.length, colsB = B[0].length;
+    if (colsA !== rowsB) throw new Error('Number of columns in A must equal number of rows in B');
+    const result = Array.from({ length: rowsA }, () => Array(colsB).fill(0));
+    for (let i = 0; i < rowsA; i++) {
+      for (let j = 0; j < colsB; j++) {
+        for (let k = 0; k < colsA; k++) {
+          result[i][j] += A[i][k] * B[k][j];
+        }
+      }
+    }
+    return result;
+  }
+
+  // Helper function to add two matrices
+  function add(A, B) {
+    return A.map((row, i) => row.map((val, j) => val + B[i][j]));
+  }
+
+  // Helper function to invert a matrix (using Gaussian elimination)
+  function invert(matrix) {
+    const n = matrix.length;
+    const identity = Array.from({ length: n }, (_, i) =>
+      Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))
+    );
+    const augmented = matrix.map((row, i) => row.concat(identity[i]));
+
+    for (let i = 0; i < n; i++) {
+      let maxRow = i;
+      for (let k = i + 1; k < n; k++) {
+        if (Math.abs(augmented[k][i]) > Math.abs(augmented[maxRow][i])) {
+          maxRow = k;
+        }
+      }
+      [augmented[i], augmented[maxRow]] = [augmented[maxRow], augmented[i]];
+
+      const pivot = augmented[i][i];
+      for (let j = i; j < 2 * n; j++) {
+        augmented[i][j] /= pivot;
+      }
+
+      for (let k = 0; k < n; k++) {
+        if (k !== i) {
+          const factor = augmented[k][i];
+          for (let j = i; j < 2 * n; j++) {
+            augmented[k][j] -= factor * augmented[i][j];
+          }
+        }
+      }
+    }
+
+    return augmented.map(row => row.slice(n));
+  }
+
+  const DTD = multiply(transpose(D), D);
+  const H = add(I, DTD.map(row => row.map(value => value * lambda)));
+  const H_inv = invert(H);
+  const trend = multiply(H_inv, data.map(value => [value]));
+  const residual = data.map((val, i) => val - trend[i][0]);
+
+  return residual;
+}
+
+// 计算FFT并返回频谱
+function computeFFT(data: number[]) {
+  const fft = new FFT(data.length);
+  const out = fft.createComplexArray();
+  fft.realTransform(out, data);
+  fft.completeSpectrum(out);
+
+  const spectrum = [];
+  for (let i = 0; i < out.length / 2; i += 2) {
+    const magnitude = Math.sqrt(out[i] * out[i] + out[i + 1] * out[i + 1]);
+    spectrum.push(magnitude);
+  }
+
+  return spectrum;
+}
+
+// 计算心跳频率
+function calculateHeartRate(spectrum: number[]): number {
+  // 心率范围的频率（每秒）
+  const minBpm = 60; // 最小心率
+  const maxBpm = 120; // 最大心率
+  const minFreq = minBpm / 60;
+  const maxFreq = maxBpm / 60;
+
+  // 计算频率分辨率
+  const freqResolution = fps / spectrum.length;
+
+  // 带通滤波器：只保留心率范围内的频率分量
+  const filteredSpectrum = spectrum.map((value, index) => {
+    const frequency = index * freqResolution;
+    if (frequency >= minFreq && frequency <= maxFreq) {
+      return value;
+    } else {
+      return 0;
+    }
+  });
+
+  // 找到带通滤波后的最大值对应的频率
+  const peakIndex = filteredSpectrum.reduce((maxIndex, value, index, array) => {
+    return value > array[maxIndex] ? index : maxIndex;
+  }, 0);
+
+  // 计算心率
+  const frequency = peakIndex * freqResolution;
+  const heartRate = frequency * 60; // 转换为每分钟心跳数
+
+  return heartRate;
+}
+
+// 计算血氧浓度
+function calculateSpO2(redChannelData: number[], blueChannelData: number[]) {
+  // 计算平均值
+  const redMean = redChannelData.reduce((sum, value) => sum + value, 0) / redChannelData.length;
+  const blueMean = blueChannelData.reduce((sum, value) => sum + value, 0) / blueChannelData.length;
+
+  // 计算标准偏差
+  const redStdDev = Math.sqrt(redChannelData.reduce((sum, value) => sum + Math.pow(value - redMean, 2), 0) / redChannelData.length);
+  const blueStdDev = Math.sqrt(blueChannelData.reduce((sum, value) => sum + Math.pow(value - blueMean, 2), 0) / blueChannelData.length);
+
+  // 计算比值 R
+  const R = (redStdDev / redMean) / (blueStdDev / blueMean);
+
+  // 计算 SpO2
+  const SpO2 = 110 - 25 * R;
+
+  return SpO2;
+}
 </script>
 
 <style scoped>
-body {
-  font-family: roboto;
-  margin: 2em;
-  color: #3d3d3d;
-  --mdc-theme-primary: #007f8b;
-  --mdc-theme-on-primary: #f1f3f4;
-}
-
-h1 {
-  color: #007f8b;
-}
-
-h2 {
-  clear: both;
-}
-
-video {
-  clear: both;
-  display: block;
-  transform: rotateY(180deg);
-  -webkit-transform: rotateY(180deg);
-  -moz-transform: rotateY(180deg);
-  height: 280px;
-}
-
-section {
-  opacity: 1;
-  transition: opacity 500ms ease-in-out;
-}
-
-.removed {
-  display: none;
-}
-
-.invisible {
-  opacity: 0.2;
-}
-
-.detectOnClick {
-  position: relative;
-  float: left;
-  width: 48%;
-  margin: 2% 1%;
-  cursor: pointer;
-}
-.videoView {
-  position: absolute;
-  float: left;
-  width: 48%;
-  margin: 2% 1%;
-  cursor: pointer;
-  min-height: 500px;
-}
-
-.videoView p,
-.detectOnClick p {
-  padding-top: 5px;
-  padding-bottom: 5px;
-  background-color: #007f8b;
-  color: #fff;
-  border: 1px dashed rgba(255, 255, 255, 0.7);
-  z-index: 2;
-  margin: 0;
-}
-
-.highlighter {
-  background: rgba(0, 255, 0, 0.25);
-  border: 1px dashed #fff;
-  z-index: 1;
-  position: absolute;
-}
-
-.canvas {
-  z-index: 1;
-  position: absolute;
-  pointer-events: none;
-}
-
-.output_canvas {
-  transform: rotateY(180deg);
-  -webkit-transform: rotateY(180deg);
-  -moz-transform: rotateY(180deg);
-}
-
-.detectOnClick {
-  z-index: 0;
-  font-size: calc(8px + 1.2vw);
-}
-
-.detectOnClick img {
-  width: 45vw;
-}
-.output {
-  display: none;
-  width: 100%;
-  font-size: calc(8px + 1.2vw);
+.resultsContainerElement {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 </style>
