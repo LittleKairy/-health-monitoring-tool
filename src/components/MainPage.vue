@@ -3,9 +3,17 @@
     <button @click="handleBtnClick">
       {{ btnText }}
     </button>
-    <div style="position: relative;">
-      <video ref="video" autoplay playsinline @loadeddata="predictWebcam"></video>
-      <canvas ref="canvasElement" style="position: absolute; left: 0px; top: 0px; z-index: 1;"></canvas>
+    <div style="position: relative">
+      <video
+        ref="video"
+        autoplay
+        playsinline
+        @loadeddata="predictWebcam"
+      ></video>
+      <canvas
+        ref="canvasElement"
+        style="position: absolute; left: 0px; top: 0px; z-index: 1"
+      ></canvas>
     </div>
     <div ref="resultsContainerElement" class="resultsContainerElement">
       <!-- <canvas ref="resultCanvasELement" :width="videoWidth" :height="videoHeight"></canvas> -->
@@ -95,15 +103,16 @@ const hasGetUserMedia = computed(() => !!navigator.mediaDevices?.getUserMedia);
 
 const handleBtnClick = () => {
   if (hasGetUserMedia.value) {
-    enableCam();
+    enableCam(); // 打开设想头
   } else {
     console.warn("getUserMedia() is not supported by your browser");
   }
-}
+};
 
+// 浏览器页面加载之前会执行这个函数
 onMounted(() => {
   // 获取到canvas的上下文
-  canvasCtx = canvasElement.value?.getContext('2d') as CanvasRenderingContext2D;
+  canvasCtx = canvasElement.value?.getContext("2d") as CanvasRenderingContext2D;
   // resultCanvasCtx = resultCanvasELement.value?.getContext('2d') as CanvasRenderingContext2D;
 
   // 设置video元素的宽高和canvas一致
@@ -116,13 +125,18 @@ onMounted(() => {
 
   // 创建存放指尖图像结果的canvas
   for (let i = 0; i < 5; i++) {
-    const resultCanvasELement = document.createElement('canvas');
+    // 创建canvas
+    const resultCanvasELement = document.createElement("canvas");
     resultCanvasELement.height = resultHeight;
     resultCanvasELement.width = resultWidth;
     if (resultsContainerElement.value) {
       resultsContainerElement.value.appendChild(resultCanvasELement);
     }
-    const ctx = resultCanvasELement.getContext('2d') as CanvasRenderingContext2D;
+    const ctx = resultCanvasELement.getContext(
+      "2d"
+    ) as CanvasRenderingContext2D;
+
+    // 加入数组
     resultsCanvasCtx.push(ctx);
   }
 });
@@ -138,18 +152,14 @@ const predictWebcam = async () => {
   }
 
   canvasCtx.save();
-  canvasCtx.clearRect(
-    0,
-    0,
-    videoWidth,
-    videoHeight,
-  );
+  canvasCtx.clearRect(0, 0, videoWidth, videoHeight);
   const drawingUtils = new DrawingUtils(canvasCtx);
 
   if (results.landmarks) {
     for (let landmarks of results.landmarks) {
       landmarks = landmarks.filter((item, i) => fingerArr.includes(i));
       drawingUtils.drawLandmarks(landmarks, {
+        // 画红点在五个手指上
         color: "#FF0000",
         lineWidth: 2,
       });
@@ -158,22 +168,37 @@ const predictWebcam = async () => {
         if (item.x <= 1 && item.y <= 1) {
           resultsCanvasCtx[i].save();
           // 这里位置有一定的偏差，暂未解决，暂时加上30px
-          resultsCanvasCtx[i].drawImage(video.value as CanvasImageSource, item.x * videoWidth + 30, item.y * videoHeight + 30, resultWidth, resultHeight, 0, 0, resultWidth, resultWidth);
+          resultsCanvasCtx[i].drawImage(
+            video.value as CanvasImageSource,
+            item.x * videoWidth + 30,
+            item.y * videoHeight + 30,
+            resultWidth,
+            resultHeight,
+            0,
+            0,
+            resultWidth,
+            resultWidth
+          );
 
-          // 提取RGB信号
-          const frame = resultsCanvasCtx[i].getImageData(0, 0, resultWidth, resultHeight);
-          extractColorSignals(frame, i);
+          // 提取当前帧图像的RGB值
+          const frame = resultsCanvasCtx[i].getImageData(
+            0,
+            0,
+            resultWidth,
+            resultHeight
+          );
+          extractColorSignals(frame, i); // 加入RGB通道并计算心率和血氧
 
           resultsCanvasCtx[i].restore();
         } else {
           resultsCanvasCtx[i].clearRect(0, 0, resultWidth, resultHeight);
         }
-      })
+      });
     }
   } else {
     resultsCanvasCtx.forEach((item) => {
       item.clearRect(0, 0, resultWidth, resultHeight);
-    })
+    });
   }
 
   canvasCtx.restore();
@@ -182,8 +207,7 @@ const predictWebcam = async () => {
   if (webcamRunning === true) {
     window.requestAnimationFrame(predictWebcam);
   }
-}
-
+};
 
 // RBG信号
 const redSignal: Array<Array<number>> = new Array(5);
@@ -194,7 +218,6 @@ for (let i = 0; i < 5; i++) {
   greenSignal[i] = new Array();
   blueSignal[i] = new Array();
 }
-const lambda = 1600; // HP 滤波参数
 const fps = 30; // 帧率
 const heartRateDisplay = ref<number[]>(new Array(5));
 const spO2Display = ref<number[]>(new Array(5));
@@ -206,7 +229,9 @@ const spO2Display = ref<number[]>(new Array(5));
  */
 function extractColorSignals(frame: ImageData, index: number) {
   const length = frame.data.length / 4;
-  let red = 0, green = 0, blue = 0;
+  let red = 0,
+    green = 0,
+    blue = 0;
 
   for (let i = 0; i < length; i++) {
     red += frame.data[i * 4];
@@ -218,22 +243,16 @@ function extractColorSignals(frame: ImageData, index: number) {
   greenSignal[index].push(green / length);
   blueSignal[index].push(blue / length);
 
-  if (redSignal[index].length >= 256) { // 为fft保留2的幂次方的length
+  if (redSignal[index].length >= 256) {
+    // 为fft保留2的幂次方的length
     // 计算心率
-    // 对绿色分量进行 HP 滤波
-    // const greenResidual = hpFilter(greenSignal[index], lambda);
-    // 对滤波后的残差进行 FFT 变换
-    // const greenSpectrum = computeFFT(greenResidual);
+    // 对绿色分量进行 FFT 变换
     const greenSpectrum = computeFFT(greenSignal[index]);
     // 得出心率
     const heartRate = calculateHeartRate(greenSpectrum);
     heartRateDisplay.value[index] = heartRate;
 
-    // 计算血氧浓度
-    // 对红色和蓝色进行HP滤波
-    // const redResidual = hpFilter(redSignal[index], lambda);
-    // const blueResidual = hpFilter(blueSignal[index], lambda);
-    // const spO2 = calculateSpO2(redResidual, blueResidual);
+    // 根据红色和蓝色计算血氧浓度
     const spO2 = calculateSpO2(redSignal[index], blueSignal[index]);
     spO2Display.value[index] = spO2;
 
@@ -241,91 +260,6 @@ function extractColorSignals(frame: ImageData, index: number) {
     greenSignal[index].shift();
     blueSignal[index].shift();
   }
-}
-
-// HP 滤波函数
-function hpFilter(data: number[], lambda: number) {
-  const n = data.length;
-  const I = Array.from({ length: n }, (_, i) =>
-    Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))
-  );
-  const D = Array.from({ length: n - 2 }, (_, i) =>
-    Array.from({ length: n }, (_, j) => {
-      if (j === i) return 1;
-      if (j === i + 1) return -2;
-      if (j === i + 2) return 1;
-      return 0;
-    })
-  );
-
-  // Helper function to transpose a matrix
-  function transpose(matrix) {
-    return matrix[0].map((_, colIndex) => matrix.map(row => row[colIndex]));
-  }
-
-  // Helper function to multiply two matrices
-  function multiply(A, B) {
-    const rowsA = A.length, colsA = A[0].length;
-    const rowsB = B.length, colsB = B[0].length;
-    if (colsA !== rowsB) throw new Error('Number of columns in A must equal number of rows in B');
-    const result = Array.from({ length: rowsA }, () => Array(colsB).fill(0));
-    for (let i = 0; i < rowsA; i++) {
-      for (let j = 0; j < colsB; j++) {
-        for (let k = 0; k < colsA; k++) {
-          result[i][j] += A[i][k] * B[k][j];
-        }
-      }
-    }
-    return result;
-  }
-
-  // Helper function to add two matrices
-  function add(A, B) {
-    return A.map((row, i) => row.map((val, j) => val + B[i][j]));
-  }
-
-  // Helper function to invert a matrix (using Gaussian elimination)
-  function invert(matrix) {
-    const n = matrix.length;
-    const identity = Array.from({ length: n }, (_, i) =>
-      Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))
-    );
-    const augmented = matrix.map((row, i) => row.concat(identity[i]));
-
-    for (let i = 0; i < n; i++) {
-      let maxRow = i;
-      for (let k = i + 1; k < n; k++) {
-        if (Math.abs(augmented[k][i]) > Math.abs(augmented[maxRow][i])) {
-          maxRow = k;
-        }
-      }
-      [augmented[i], augmented[maxRow]] = [augmented[maxRow], augmented[i]];
-
-      const pivot = augmented[i][i];
-      for (let j = i; j < 2 * n; j++) {
-        augmented[i][j] /= pivot;
-      }
-
-      for (let k = 0; k < n; k++) {
-        if (k !== i) {
-          const factor = augmented[k][i];
-          for (let j = i; j < 2 * n; j++) {
-            augmented[k][j] -= factor * augmented[i][j];
-          }
-        }
-      }
-    }
-
-    return augmented.map(row => row.slice(n));
-  }
-
-  const DTD = multiply(transpose(D), D);
-  const H = add(I, DTD.map(row => row.map(value => value * lambda)));
-  const H_inv = invert(H);
-  const trend = multiply(H_inv, data.map(value => [value]));
-  const residual = data.map((val, i) => val - trend[i][0]);
-
-  return residual;
 }
 
 // 计算FFT并返回频谱
@@ -380,15 +314,29 @@ function calculateHeartRate(spectrum: number[]): number {
 // 计算血氧浓度
 function calculateSpO2(redChannelData: number[], blueChannelData: number[]) {
   // 计算平均值
-  const redMean = redChannelData.reduce((sum, value) => sum + value, 0) / redChannelData.length;
-  const blueMean = blueChannelData.reduce((sum, value) => sum + value, 0) / blueChannelData.length;
+  const redMean =
+    redChannelData.reduce((sum, value) => sum + value, 0) /
+    redChannelData.length;
+  const blueMean =
+    blueChannelData.reduce((sum, value) => sum + value, 0) /
+    blueChannelData.length;
 
   // 计算标准偏差
-  const redStdDev = Math.sqrt(redChannelData.reduce((sum, value) => sum + Math.pow(value - redMean, 2), 0) / redChannelData.length);
-  const blueStdDev = Math.sqrt(blueChannelData.reduce((sum, value) => sum + Math.pow(value - blueMean, 2), 0) / blueChannelData.length);
+  const redStdDev = Math.sqrt(
+    redChannelData.reduce(
+      (sum, value) => sum + Math.pow(value - redMean, 2),
+      0
+    ) / redChannelData.length
+  );
+  const blueStdDev = Math.sqrt(
+    blueChannelData.reduce(
+      (sum, value) => sum + Math.pow(value - blueMean, 2),
+      0
+    ) / blueChannelData.length
+  );
 
   // 计算比值 R
-  const R = (redStdDev / redMean) / (blueStdDev / blueMean);
+  const R = redStdDev / redMean / (blueStdDev / blueMean);
 
   // 计算 SpO2
   const SpO2 = 110 - 25 * R;
